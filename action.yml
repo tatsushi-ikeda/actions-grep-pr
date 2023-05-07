@@ -1,0 +1,71 @@
+name: "Grep PR Messages Action"
+
+description: "Grep PR messages and posts the output as a comment on the PR"
+
+inputs:
+  invalid-pattern:
+    description: 'Regexp Pattern to check'
+    required: true
+
+outputs:
+  output:
+    description: "The output of the check script"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      
+    - name: Install dependencies
+      shell: bash
+      run: sudo apt-get install -y openssl
+      
+    - name: Grepping PR text
+      shell: bash
+      env:
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_BODY:  ${{ github.event.pull_request.body }}
+        GREP_PATTERN: ${{ inputs.invalid-pattern }}
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set +e
+        chmod +x $GITHUB_ACTION_PATH/check_pr.sh
+        script_output=$($GITHUB_ACTION_PATH/check_pr.sh)
+        script_exitcode=$?
+        
+        delimiter="$(openssl rand -hex 8)"
+        echo "SCRIPT_OUTPUT<<$delimiter"                   >> "$GITHUB_ENV"
+        echo "${script_output}"                            >> "$GITHUB_ENV"
+        echo "$delimiter"                                  >> "$GITHUB_ENV"
+        
+        echo "SCRIPT_OUTPUT_MARKDOWN<<$delimiter"          >> "$GITHUB_ENV"
+        echo "We received the following message from bot." >> "$GITHUB_ENV"
+        echo "\\\`\\\`\\\`text"                            >> "$GITHUB_ENV"
+        echo "${script_output}"                            >> "$GITHUB_ENV"
+        echo "\\\`\\\`\\\`"                                >> "$GITHUB_ENV"
+        echo "$delimiter"                                  >> "$GITHUB_ENV"
+        
+        echo "SCRIPT_EXITCODE=${script_exitcode}"          >> "$GITHUB_ENV"
+  
+    - name: Write result to log
+      shell: bash
+      run: |
+        echo "${{ env.SCRIPT_OUTPUT }}"
+    
+    - name: Create comment
+      uses: actions/github-script@v6
+      if: ${{ env.SCRIPT_EXITCODE != 0 }}
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `${{ env.SCRIPT_OUTPUT_MARKDOWN }}`
+          })
+          
+    - name: Set exit code
+      shell: bash
+      run: |
+        exit ${{ env.SCRIPT_EXITCODE }}
